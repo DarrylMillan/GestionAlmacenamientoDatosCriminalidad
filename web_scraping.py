@@ -1,27 +1,36 @@
+# Script para descarga de archivos de excel desde la pagina de la policia nacional
+# mediante la tecnica de web scraping.
+# Transformacion de los archivos descargados y cargue a la tabla de hechos delitos
+# en la base de datos AWS
+
+
 # Librerias
-import requests
-import pandas as pd
-import os
-from bs4 import BeautifulSoup
-import time
-import re
 import numpy as np
+import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+import psycopg2
+import time
+import os
+import re
+from datetime import datetime
 
 # URL de la página web
-# url = 'https://www.policia.gov.co/estadistica-delictiva'
-
 base_url = 'https://www.policia.gov.co/estadistica-delictiva?page='
 
 encabezado = { "user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36" }
 
 
-""" Funcion para realizar web scraping y descargar los archivos de excel"""
-def descargar_bases():
+""" Funcion para realizar web scraping y descargar los archivos de excel desde la pagina de la policia nacional """
+def descargar_webscraping():
 
+    # Ruta donde se aloja el script de python
     ruta = os.path.dirname(os.path.realpath(__file__))
+
+    # Cantida de paginas a consultar
     page = 27
 
-    # Ciclo para recorrer todas las páginas de la paginación
+    # Ciclo para recorrer todas las páginas
     for i in range(page):
 
         df_lista = ''
@@ -30,12 +39,13 @@ def descargar_bases():
         
         print(f'\n- Pagina {str(i + 1)} **************************')
 
-        # Realizar la solicitud HTTP para obtener el contenido de la página
+        # Realizar solicitud HTTP para obtener el contenido de la página
         response = requests.get(page_url, headers=encabezado)
 
         # Validar respuesta de peticion get al servidor
         if response.status_code == 200:
-        
+            
+            # Capturar contenido HTML
             soup = BeautifulSoup(response.content, 'html.parser')
 
             # Leer valores de la tabla
@@ -45,19 +55,18 @@ def descargar_bases():
             # Recorrer filas de la tabla
             for fila in filas_tr:
                 
-                # Capturar valores de celdas
+                # Capturar valores de las celdas de la tabla
                 celdas_filas = fila.find_all('td') 
-
                 valores_posicion = [value.get_text(strip=True) for value in celdas_filas]
 
-                # Capturar enlaces de archivos
+                # Capturar enlaces de los archivos
                 enlaces = fila.find_all('a', href=True)
-
                 excel_enlaces = [enlace['href'] for enlace in enlaces if enlace['href'].endswith('.xlsx')]
 
+
+                # Almacenar informacion en lista resultado
                 if excel_enlaces:
 
-                    # Almacenar informacion en lista resultado
                     resultados.append({
                         'Nombre_delito': valores_posicion[0],
                         'Anio_delito': valores_posicion[1],
@@ -73,6 +82,7 @@ def descargar_bases():
 
             if df_lista.empty == False:
 
+                # Imprimir dataframe resultado
                 # print(df_lista)
 
                 # Definir la carpeta de destino para los archivos descargados
@@ -109,35 +119,18 @@ def descargar_bases():
 
     print(' \n************************** Proceso descarga finalizado **************************')
 
-        # # Filtrar por delito de impacto y año
-        # def filtrar_archivo_excel(file_path, delito, año):
-        #     # Cargar el archivo Excel en un DataFrame de pandas
-        #     df = pd.read_excel(file_path)
-            
-        #     # Filtrar por delito de impacto y año
-        #     df_filtrado = df[(df['Delito'] == delito) & (df['Año'] == año)]
-            
-        #     return df_filtrado
-
-        # # Ejemplo de uso
-        # delito = 'Homicidio'  # Reemplaza con el delito deseado
-        # año = 2023  # Reemplaza con el año deseado
-
-        # # Filtrar cada archivo descargado
-        # for file_name in os.listdir(output_dir):
-        #     if file_name.endswith('.xlsx'):
-        #         file_path = os.path.join(output_dir, file_name)
-        #         df_filtrado = filtrar_archivo_excel(file_path, delito, año)
-        #         print(df_filtrado)
 
 
-''' Funcion para consolidar dataframes por delito en un solo archivo '''
+''' Funcion para consolidar archivos de excel descargados con web scraping en un solo archivo '''
 def consolidar_data(delito):
     
+    # Establecer ruta desde donde se leen los archivos ya descargados
     ruta = os.path.dirname(os.path.realpath(__file__)) + r'\Bases sin procesar\Bases web scraping'
 
-    # Lista para almacenar los dataFrames de cada archivo
+    # Lista para almacenar los dataframes de cada archivo
     dataframes = []
+
+    # Patrones que ayudan a filtrar archivos o contenido de los archivos
     patron = re.compile(f'^{delito}')
     patron_titulo = re.compile('^MINISTERIO')
     
@@ -149,6 +142,7 @@ def consolidar_data(delito):
 
             for archivo in archivos:
                 
+                # Filtrar archivos y validar extensiones
                 if archivo.is_file() and archivo.name.endswith('.xlsx') and patron.search(archivo.name):
 
                     nombre = archivo.name
@@ -166,6 +160,7 @@ def consolidar_data(delito):
 
                             column_name = colname
 
+                            # Iterar por fila para reasignar encabezados
                             for index, row in df.iterrows():
 
                                 # Eliminar las filas anteriores a la fila que contenga la palabra 'DEPARTAMENTO'
@@ -239,12 +234,6 @@ def consolidar_data(delito):
                     elif delito == 'Terrorismo':
                         df['CONFLICTIVIDAD'] = 'terrorismo'
 
-               
-                    if 'SEXO' not in df.columns: 
-                        df['SEXO'] = 'sin dato '
-                    
-                    if 'AGRUPA_EDAD_PERSONA' not in df.columns: 
-                        df['AGRUPA_EDAD_PERSONA'] = 'sin dato '
 
                     # Asignar id tipo delito
                     tipo_conflictividad = {
@@ -254,11 +243,14 @@ def consolidar_data(delito):
 
                     # Crear dataframe con diccionario tipo delito
                     df_tipo = pd.DataFrame(tipo_conflictividad)
+
+                    # Asignar id tipo delito al dataframe
                     df = pd.merge(df, df_tipo, on = 'CONFLICTIVIDAD')
 
                     # Imprimir dataframe
                     # print(df)
                     
+                    # Anexar dataframea la lista datframes
                     dataframes.append(df)
 
 
@@ -271,18 +263,16 @@ def consolidar_data(delito):
             # Eliminar columna index que se crea despues de reiniciar los indices
             concatenar_dataframes.drop('index', axis = 1, inplace = True)
 
-            # Filtrar columnas especificas para cargar
+            # Filtrar columnas especificas del dataframe
             concatenar_dataframes = concatenar_dataframes.loc[:, ['CODIGO_DANE', 'ID_TIPO_DELITO', 'ARMA_EMPLEADA', 'FECHA_HECHO', 'SEXO', 'AGRUPA_EDAD_PERSONA']]
 
-            # Imprimir dataFrame consolidado
-            # print(concatenar_dataframes)
-
-            # Transformar datframe
+            # Transformar dataframe
             df_final = transformar(concatenar_dataframes)
             
+            # Imprimir dataframe consolidado y transformado
             # print(df_final)
 
-            # Descargar datframe
+            # Descargar dataframe unificado por delito 
             df_final.to_excel(os.path.dirname(os.path.realpath(__file__)) + r'\Bases procesadas\Base_unida_' + f'{delito}.xlsx', index=False)
 
 
@@ -327,6 +317,7 @@ def transformar(df_):
             df[col] = pd.to_datetime(df[col], dayfirst=True)
             df[col] = df[col].dt.strftime('%Y-%m-%d')
 
+    # Reasignar valor del codigo postal 
     for index, row in df.iterrows():
         if len(str(row['CODIGO_DANE'])) == 8:
             df.at[index, 'CODIGO_DANE'] = str(row['CODIGO_DANE'])[:5]
@@ -334,20 +325,113 @@ def transformar(df_):
         else:
             df.at[index, 'CODIGO_DANE'] = str(row['CODIGO_DANE'])[:4]
 
-
+    # Reclasificar la columna grupo edad
     df['AGRUPA_EDAD_PERSONA'] = [value if value in ['adulto', 'sin dato'] else 'menor de edad' for value in df['AGRUPA_EDAD_PERSONA']]
 
     # retorna dataframe
     return df
 
 
+
+''' Funcion para cargar dataset recibido por parametros a la base de datos AWS'''
+def cargar_dataset(dataset, tamano):
+
+    inicio_cargue = datetime.now()
+
+    print(f'\n - Dataset: {os.path.split(dataset)[1]}')
+
+    # Leer dataset
+    df_dataset = pd.read_excel(dataset)
+
+    df_dataset['CODIGO_DANE'] = df_dataset['CODIGO_DANE'].fillna(0).astype(np.int64)
+
+    
+    # Imprimir dataframe
+    print(df_dataset)
+
+    # Abrir conexion con base de datos
+    conn = conexion_post()
+
+    try:
+
+        # Insertar data en la base de datos de manera incremental de 1000 en 1000
+        with conn.cursor() as cur:
+
+            # Query sql
+            insert_sql = """INSERT INTO H_DELITOS (ID_DANE_MUNICIPIO, ID_TIPO_DELITO, ARMAS_MEDIOS, FECHA_HECHO, GENERO, AGRUPA_EDAD_PERSONA) VALUES (%s, %s, %s, %s, %s, %s);"""
+
+            # Recorrido en batches de 100
+            for i in range(0, len(df_dataset), tamano):
+
+                batch = df_dataset.iloc[i:i + tamano]
+
+                print(batch)
+
+                # Generar lista de tuplas de cada fila del batch
+                values = [tuple(row) for row in batch.values]
+
+                # Envio de datos a base de datos AWS
+                for row in values:
+                    cur.execute(insert_sql, row)
+
+                conn.commit()
+
+    except Exception as e:
+
+        print(' - Error al cargar dataframe:', e)
+
+    finally:
+
+        # Cerrar conexion 
+        cur.close()
+        conn.close()
+
+        print(' - Cargue finalizado...', '{}'.format(datetime.now() - inicio_cargue), '\n')
+
+
+
+''' Funcion para retornar conexion con base de datos postgres en AWS '''
+def conexion_post():
+
+    # Datos de conexión
+    db_host = "rdsgestion.c3eis0mqyqce.us-east-2.rds.amazonaws.com"  # Endpoint RDS
+    db_port = "5432"  # Puerto por defecto de PostgreSQL
+    db_name = "postgres"  # Nombre de la base de datos
+    db_user = "RDSGestion"  # Usuario de la base de datos
+    db_password = "WXAzIDAn1ZpAtSoO28vN"  # Contraseña del usuario
+
+    try:
+
+        connection = psycopg2.connect(
+            host=db_host,
+            port=db_port,
+            database=db_name,
+            user=db_user,
+            password=db_password
+        )
+
+        return connection
+
+    except Exception as e:
+
+        print(' - Error al conectar con servidor:', e)
+
+
+
 # Inicializar script
 if __name__ == '__main__':
 
-    # Tecnica de web scraping
-    descargar_bases()
+    ''' Descargar archivos pagina policia nacional con la tecnica de web scraping '''
 
-    # Consolidar dataframes
+    # # Tecnica de web scraping
+    descargar_webscraping()
+
+    time.sleep(3)
+
+
+    ''' Consolidar archivos en un solo dataset por delito '''
+
+    # Unificar archivos descargados de delitos en un solo dataset por tipo de delito
     consolidar_data('Amenazas')
     consolidar_data('Delitos_sexuales')
     consolidar_data('Homicidios')
@@ -355,5 +439,28 @@ if __name__ == '__main__':
     consolidar_data('Extorsión')
     consolidar_data('Lesiones_personales')
     consolidar_data('Secuestro')
+
+    time.sleep(3)
+
+
+    ''' Cargar datasets a base de datos AWS '''
+
+    # Cargar archivos unificados por delito a la base de datos AWS
+    ruta = os.path.dirname(os.path.realpath(__file__)) + r'\Bases procesadas'
+    filtro = 'Base_unida'  
+
+    # Filtrar cada archivo descargado
+    for archivo in os.listdir(ruta):
+        if archivo.endswith('.xlsx') and archivo.startswith(filtro):
+            
+            ruta_completa = os.path.join(ruta, archivo)
+
+            # Imprimir ruta del dataset a cargar
+            # print(ruta_completa)
+
+            # Cargar dataset a la base de datos en batches de 1000 en 1000
+            cargar_dataset(ruta_completa, 1000)
+
+            time.sleep(3)
 
 

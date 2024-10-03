@@ -1,3 +1,7 @@
+# Script para consolidar la estructura de la tabla dimension municipios 
+# y finalmente cargar dataset en AWS
+
+
 import psycopg2
 import pandas as pd
 import requests
@@ -12,13 +16,14 @@ header = { "Content-Type":"aplication/json",
             "Accept-Encoding": "deflate"}
 
 
-''' Funcion para consumir API mediante parametros
+''' Funcion para consumir API de openweathermap mediante parametros
     @return archivo json
 '''
 def datos_geo(Pais,Zip,Ciudad,url_api,api_key):
     end_p = f"{url_api}q={Ciudad},{Zip},{Pais}&appid={api_key}&units=metric"
     res = requests.get(end_p,headers=header)
 
+    # Validar estatus y retorna json
     if res.status_code == 200:
         return res.json()
     
@@ -28,21 +33,27 @@ def datos_geo(Pais,Zip,Ciudad,url_api,api_key):
 
 ''' Funcion para quitar tildes a los municipios'''
 def quitar_tildes(texto):
+
     if isinstance(texto, str):  
         texto = unicodedata.normalize('NFKD', texto).encode('ascii', 'ignore').decode('utf-8')
         return texto
     return texto
 
 
-''' Funcion para leer archivos de municipios u geojson '''
+''' Funcion para leer archivos de municipios, geojson.
+    Consumir API y asignar coordenadas de latitud y longitud 
+'''
 def transformar():
-    df_mun = pd.read_excel(os.path.dirname(os.path.realpath(__file__)) + r'\Municipios.xlsx')
+    
+    ruta = os.path.dirname(os.path.realpath(__file__))
+
+    df_mun = pd.read_excel(ruta + r'\Municipios.xlsx')
     df_mun.sort_values(by=['Nombre_depto', 'Nombre_mpio'], ascending=[True, True], inplace=True)
 
     df_mun['Latitud'] = None
     df_mun['Longitud'] = None
 
-    df_Geo = pd.read_excel(os.path.dirname(os.path.realpath(__file__)) + r'\Geo_Municipios.xlsx')
+    df_Geo = pd.read_excel(ruta + r'\Geo_Municipios.xlsx')
     df_Geo.sort_values(by=['Nombre_depto', 'Nombre_mpio'], ascending=[True, True], inplace=True)
 
     # API Openweather
@@ -74,7 +85,11 @@ def transformar():
     # Quitar tildes 
     df_mun = df_mun.apply(lambda col: col.map(lambda x: quitar_tildes(x.lower()) if isinstance(x, str) else x))
 
-    # Cargar dataframe
+    # Descargar dataframe en excel
+    df_mun.to_excel(ruta + r'\Bases procesadas\Municipios.xlsx', sheet_name='Mpio', index=False) 
+
+
+    # Cargar dataframe a AWS
     cargar_dataframe(df_mun)
 
 
@@ -111,7 +126,7 @@ def cargar_dataframe(df_data):
 
 
 
-''' Funcion para conectarse con la base de datos'''
+''' Funcion para conectarse con la base de datos AWS'''
 def conexion_post():
 
     # Datos de conexión
@@ -136,6 +151,9 @@ def conexion_post():
     except Exception as error:
         print(f"Error al conectar con base de datos: {error}")
 
+
+
+# Inicializar script
 if __name__ == '__main__':
 
     transformar()
